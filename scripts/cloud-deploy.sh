@@ -34,7 +34,7 @@ rev="$(git rev-parse --short HEAD)"
 # Slack's signing secret, the database and the sealing key (not Stripe, Latitude or the Orgo admin token).
 # Both are read before anything on the box changes, so a decrypt that fails stops here.
 public_settings="$(grep -E '^(BOPS_CLOUD_PUBLIC_URL|BOPS_CLOUD_PORT|BOPS_ORGO_ORIGIN|OPENAI_SIP_URI|BOPS_VERIFY_EMAIL|BOPS_SLACK_APP_ID|BOPS_COMPOSIO_AUTH_CONFIGS|BOPS_AI_CREDITS|BOPS_PLAN_LIMITS|BOPS_MAIL_DOMAIN|BOPS_PHONE_AREA|BOPS_TELEMETRY)=' "$prod/bops-public.env")"
-secret_settings="$(sops -d "$prod/bops-secrets.env" | grep -E '^(BOPS_DATABASE_URL|BOPS_CLOUD_SECRET|OPENAI_API_KEY|OPENAI_EXECUTOR_API_KEY|OPENAI_WEBHOOK_SECRET|AGENTPHONE_API_KEY|AGENTMAIL_API_KEY|HONCHO_API_KEY|COMPOSIO_API_KEY|TYPESAFE_API_KEY|TREG_TOKEN|BOPS_SLACK_SIGNING_SECRET|BOPS_CLOUD_PLAN_SECRET|TWILIO_[A-Z_]+)=')"
+secret_settings="$(sops -d "$prod/bops-secrets.env" | grep -E '^(BOPS_DATABASE_URL|BOPS_CLOUD_SECRET|OPENAI_API_KEY|OPENAI_EXECUTOR_API_KEY|OPENAI_WEBHOOK_SECRET|DEEPINFRA_API_KEY|AGENTPHONE_API_KEY|AGENTMAIL_API_KEY|HONCHO_API_KEY|COMPOSIO_API_KEY|TYPESAFE_API_KEY|TREG_TOKEN|BOPS_SLACK_SIGNING_SECRET|BOPS_CLOUD_PLAN_SECRET|TWILIO_[A-Z_]+)=')"
 grep -q '^BOPS_DATABASE_URL=' <<<"$secret_settings" || { echo "No BOPS_DATABASE_URL in $prod/bops-secrets.env: the box's settings stay as they are." >&2; exit 1; }
 
 echo "1/4 code ($rev)"
