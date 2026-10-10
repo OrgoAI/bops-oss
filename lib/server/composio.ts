@@ -10,7 +10,7 @@ import { trackServerEvent } from "./analytics";
 import { appHeaders } from "./app-version";
 import { cloudOn, cloudProxy, cloudSession, cloudSessionNow, cloudUrl } from "./cloud";
 import { lowRisk, movesMoney } from "./judgment";
-import { addMessage, bot, getState, id, installId, ownerName, session as threadOf, update } from "./store";
+import { addMessage, bot, getState, id, installId, ownerName, session as threadOf, stateEpoch, update } from "./store";
 import { DATA_TOOL_NAMES, dataOn, foundByBots, runDataTool } from "./treg";
 
 /**
@@ -230,6 +230,7 @@ async function authConfigFor(app: string) {
  * the same app is fine. `replaces` signs an expired account back in: the bots keep their access.
  */
 export async function connectApp(app: string, label?: string, replaces?: string, grant?: AppConnecting["grant"]) {
+  const epoch = stateEpoch();
   if (!composioOn()) throw new Error(cloudOn() ? "Connected apps aren't available right now." : "Add COMPOSIO_API_KEY to .env.local first");
   const info = (await catalog()).find((a) => a.app === app);
   const appName = info?.name ?? (await appNameOf(app));
@@ -249,6 +250,10 @@ export async function connectApp(app: string, label?: string, replaces?: string,
   const callbackUrl = `${publicUrl()}/connected?app=${encodeURIComponent(appName)}`;
   const req = await cx().connectedAccounts.link(userId(), await authConfigFor(app), { allowMultiple: true, callbackUrl });
   const waitId = req.id;
+  if (stateEpoch() !== epoch) {
+    await cx().connectedAccounts.delete(waitId).catch(() => null);
+    throw new Error("The signed-in account changed while app sign-in was starting.");
+  }
   update((s) => {
     s.connecting = (s.connecting ?? []).filter((c) => !(c.app === app && c.status === "failed"));
     s.connecting.push({ id: waitId, app, appName, label: label?.trim() || undefined, status: "waiting", at: Date.now(), replaces, grant });
@@ -258,12 +263,23 @@ export async function connectApp(app: string, label?: string, replaces?: string,
     .waitForConnection(15 * 60_000)
     .then(async (ca: { id: string }) => {
       const name = await accountName(ca.id).catch(() => undefined);
-      const old = replaces ? getState().accounts?.find((a) => a.id === replaces) : undefined;
-      const isNew = !getState().accounts?.some((a) => a.id === ca.id);
+      if (stateEpoch() !== epoch) {
+        await cx().connectedAccounts.delete(ca.id).catch(() => null);
+        return;
+      }
+      let old: AppAccount | undefined;
+      let cancelled = false;
+      let isNew = false;
       update((s) => {
-        const c = s.connecting?.find((x) => x.id === waitId);
+        const c = s.connecting?.find((x) => x.id === waitId && x.status === "waiting");
+        if (!c) {
+          cancelled = true;
+          return;
+        }
         s.connecting = (s.connecting ?? []).filter((x) => x.id !== waitId);
+        old = replaces ? s.accounts?.find((a) => a.id === replaces) : undefined;
         if (s.accounts?.some((a) => a.id === ca.id)) return;
+        isNew = true;
         (s.accounts ??= []).push({ id: ca.id, app, appName, name, label: c?.label ?? old?.label, status: "active", at: Date.now() });
         give(s, ca.id, c?.grant);
         // Signed back in: the new account takes the old one's place, with the same access.
@@ -274,12 +290,17 @@ export async function connectApp(app: string, label?: string, replaces?: string,
           dropAccount(s, old.id);
         }
       });
+      if (cancelled) {
+        await cx().connectedAccounts.delete(ca.id).catch(() => null);
+        return;
+      }
       if (isNew) trackServerEvent("bops_app_connected", { toolkit: app, reconnect: !!old }, { userId: who });
       if (old) await cx().connectedAccounts.delete(old.id).catch(() => null);
     })
     .catch((e: Error) =>
       update((s) => {
-        const c = s.connecting?.find((x) => x.id === waitId);
+        if (stateEpoch() !== epoch) return;
+        const c = s.connecting?.find((x) => x.id === waitId && x.status === "waiting");
         if (c) Object.assign(c, { status: "failed", error: /timed out/i.test(e.message) ? "The sign-in wasn't finished." : e.message.slice(0, 200) });
       }),
     );
